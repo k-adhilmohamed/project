@@ -1,0 +1,174 @@
+# Import necessary libraries for drone control and image processing
+from dronekit import connect, VehicleMode, LocationGlobalRelative, Command
+import cv2
+import numpy as np
+import time
+import threading
+import logging
+
+# Initialize logging for debugging and tracking
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Define constants and parameters
+HOME_LATITUDE = 35.363261  # Home location latitude
+HOME_LONGITUDE = 149.165230  # Home location longitude
+HOME_ALTITUDE = 20  # Home location altitude in meters
+
+OBSTACLE_DETECTION_THRESHOLD = 500  # Threshold for obstacle detection
+LOW_BATTERY_THRESHOLD = 20  # Battery level percentage to trigger return to home
+TARGET_ALTITUDE = 10  # Takeoff altitude in meters
+VIDEO_SOURCE = 0  # Video source (0 for default camera)
+
+# Connect to the vehicle
+logging.info("Connecting to vehicle...")
+try:
+    vehicle = connect('127.0.0.1:14550', wait_ready=True)  # Replace with your drone's connection string
+    logging.info("Successfully connected to vehicle")
+except Exception as e:
+    logging.error(f"Error connecting to vehicle: {e}")
+    raise
+
+# Initialize vehicle attributes
+home_location = LocationGlobalRelative(HOME_LATITUDE, HOME_LONGITUDE, HOME_ALTITUDE)
+
+# Function to arm the drone and take off to a target altitude
+def arm_and_takeoff(target_altitude):
+    logging.info("Arming motors")
+    vehicle.mode = VehicleMode("GUIDED")
+    vehicle.armed = True
+    while not vehicle.armed:
+        logging.info("Waiting for arming...")
+        time.sleep(1)
+    logging.info("Taking off!")
+    vehicle.simple_takeoff(target_altitude)
+    while True:
+        logging.info(f"Altitude: {vehicle.location.global_relative_frame.alt}")
+        if vehicle.location.global_relative_frame.alt >= target_altitude * 0.95:
+            logging.info("Reached target altitude")
+            break
+        time.sleep(1)
+
+# Function to return the drone to home location for charging
+def return_to_home():
+    logging.info("Returning to home location")
+    vehicle.mode = VehicleMode("GUIDED")
+    vehicle.simple_goto(home_location)
+    while vehicle.mode.name == "GUIDED":
+        logging.info(f"Navigating to home... Current Altitude: {vehicle.location.global_relative_frame.alt:.2f}")
+        if vehicle.location.global_relative_frame.alt <= 1:
+            logging.info("Landing...")
+            vehicle.mode = VehicleMode("LAND")
+            break
+        time.sleep(1)
+
+# Function to monitor the drone's battery level and initiate return to home if low
+def monitor_battery():
+    while True:
+        battery_level = vehicle.battery.level
+        logging.info(f"Battery level: {battery_level}%")
+        if battery_level < LOW_BATTERY_THRESHOLD:
+            logging.info("Battery level low. Initiating return to home.")
+            return_to_home()
+            break
+        time.sleep(10)
+
+# Function to detect obstacles using OpenCV
+def detect_obstacles(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 50, 150)
+    contours, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area > OBSTACLE_DETECTION_THRESHOLD:
+            x, y, w, h = cv2.boundingRect(contour)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+    return frame
+
+# Function to capture and process video feed for obstacle detection
+def capture_video():
+    cap = cv2.VideoCapture(VIDEO_SOURCE)
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_with_obstacles = detect_obstacles(frame)
+        cv2.imshow('Obstacle Detection', frame_with_obstacles)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+
+# Function to create and add waypoints for the mission
+def add_waypoints(vehicle):
+    cmds = vehicle.commands
+    cmds.clear()
+    waypoints = [
+        LocationGlobalRelative(HOME_LATITUDE, HOME_LONGITUDE, TARGET_ALTITUDE),
+        LocationGlobalRelative(HOME_LATITUDE + 0.001, HOME_LONGITUDE + 0.001, TARGET_ALTITUDE),
+        LocationGlobalRelative(HOME_LATITUDE - 0.001, HOME_LONGITUDE - 0.001, TARGET_ALTITUDE + 10)
+    ]
+    for waypoint in waypoints:
+        cmd = Command(0, 0, 0, 16, 3, 0, 0, 0, 0, 0, 0, waypoint.lat, waypoint.lon, waypoint.alt)
+        cmds.add(cmd)
+    cmds.upload()
+
+# Function to detect intruders using a simple color threshold (example implementation)
+def detect_intruder(frame):
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    lower_red = np.array([0, 120, 70])
+    upper_red = np.array([10, 255, 255])
+    mask = cv2.inRange(hsv, lower_red, upper_red)
+    contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area > OBSTACLE_DETECTION_THRESHOLD:
+            x, y, w, h = cv2.boundingRect(contour)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            logging.info("Intruder detected!")
+    return frame
+
+# Function to capture video and detect intruders
+def capture_and_detect_intruders():
+    cap = cv2.VideoCapture(VIDEO_SOURCE)
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_with_intruder = detect_intruder(frame)
+        cv2.imshow('Intruder Detection', frame_with_intruder)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+
+# Main function to start the drone's mission
+def start_mission():
+    arm_and_takeoff(TARGET_ALTITUDE)
+    add_waypoints(vehicle)
+    vehicle.commands.next = 0
+    vehicle.mode = VehicleMode("AUTO")
+    
+    battery_thread = threading.Thread(target=monitor_battery)
+    battery_thread.start()
+    
+    video_thread = threading.Thread(target=capture_video)
+    video_thread.start()
+    
+    intruder_thread = threading.Thread(target=capture_and_detect_intruders)
+    intruder_thread.start()
+
+    while vehicle.mode.name == "AUTO":
+        next_waypoint = vehicle.commands.next
+        logging.info(f"Next waypoint: {next_waypoint}")
+        if next_waypoint == len(vehicle.commands):
+            logging.info("Mission complete. Returning to home.")
+            return_to_home()
+            break
+        time.sleep(1)
+
+# Start the drone's mission
+start_mission()
+
+# Close vehicle connection
+logging.info("Closing vehicle connection")
+vehicle.close()
