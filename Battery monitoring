@@ -1,0 +1,173 @@
+from dronekit import connect, VehicleMode
+import time
+import logging
+import threading
+
+# Initialize logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Connect to the vehicle
+logging.info("Connecting to vehicle...")
+vehicle = connect('127.0.0.1:14550', wait_ready=True)
+logging.info("Successfully connected to vehicle")
+
+# Constants
+LOW_BATTERY_THRESHOLD = 20  # Battery level percentage to trigger return to home
+
+# Function to log detailed telemetry data
+def log_telemetry_data():
+    """
+    Logs detailed telemetry data at regular intervals.
+    """
+    while True:
+        altitude = vehicle.location.global_relative_frame.alt
+        groundspeed = vehicle.groundspeed
+        battery = vehicle.battery.level
+        logging.info(f"Telemetry data - Altitude: {altitude:.2f} m, Groundspeed: {groundspeed:.2f} m/s, Battery: {battery}%")
+        time.sleep(5)
+
+telemetry_thread = threading.Thread(target=log_telemetry_data)
+telemetry_thread.start()
+
+# Function to monitor the drone's battery level
+def monitor_battery():
+    """
+    Continuously monitors the drone's battery level and initiates return to home if low.
+    """
+    while True:
+        battery_level = vehicle.battery.level
+        logging.info(f"Battery level: {battery_level}%")
+        if battery_level < LOW_BATTERY_THRESHOLD:
+            logging.info("Battery level low. Initiating return to home.")
+            initiate_return_to_home()
+            break
+        time.sleep(10)
+
+# Function to initiate return to home sequence
+def initiate_return_to_home():
+    """
+    Initiates the return to home sequence due to low battery.
+    """
+    logging.info("Initiating return to home sequence")
+
+    # Perform pre-return checks
+    logging.info("Performing pre-return checks")
+    log_vehicle_status()
+    check_gps_fix()
+    check_battery_level()
+
+    # Change to GUIDED mode and return to home location
+    logging.info("Changing to GUIDED mode for return to home")
+    vehicle.mode = VehicleMode("GUIDED")
+    wait_for_mode_change("GUIDED")
+
+    logging.info("Navigating to home location")
+    vehicle.simple_goto(home_location)
+    wait_for_reach_home()
+
+    # Land the vehicle
+    logging.info("Landing at home location")
+    vehicle.mode = VehicleMode("LAND")
+    wait_for_mode_change("LAND", LAND_TIMEOUT)
+
+    logging.info("Return to home sequence complete")
+
+# Function to log vehicle status
+def log_vehicle_status():
+    """
+    Logs the current status of the vehicle.
+    """
+    logging.debug(f"Vehicle mode: {vehicle.mode.name}")
+    logging.debug(f"GPS fix: {vehicle.gps_0.fix_type}")
+    logging.debug(f"Battery: {vehicle.battery.level}%")
+    logging.debug(f"Is armable: {vehicle.is_armable}")
+    logging.debug(f"Last heartbeat: {vehicle.last_heartbeat}")
+    logging.debug(f"Location: {vehicle.location.global_relative_frame}")
+    logging.debug(f"Groundspeed: {vehicle.groundspeed}")
+
+# Function to wait for mode change
+def wait_for_mode_change(target_mode, timeout=60):
+    """
+    Waits for the vehicle to change to the target mode within the specified timeout.
+    """
+    start_time = time.time()
+    while vehicle.mode.name != target_mode:
+        current_time = time.time()
+        elapsed_time = current_time - start_time
+        if elapsed_time > timeout:
+            logging.error(f"Mode change to {target_mode} timeout exceeded")
+            raise TimeoutError(f"Failed to change mode to {target_mode} within timeout period")
+        logging.info(f"Waiting for mode change to {target_mode}... ({elapsed_time:.1f} seconds elapsed)")
+        time.sleep(1)
+    logging.info(f"Vehicle mode changed to {target_mode}")
+
+# Function to check GPS fix
+def check_gps_fix():
+    """
+    Ensures the vehicle has a good GPS fix before attempting to return home.
+    """
+    if vehicle.gps_0.fix_type < 2:
+        logging.warning("No GPS fix. Ensure the vehicle is outdoors and has a clear view of the sky.")
+        raise RuntimeError("No GPS fix")
+
+# Function to check battery level
+def check_battery_level(min_battery_level=20):
+    """
+    Checks the vehicle's battery level to ensure it is above the specified minimum.
+    """
+    if vehicle.battery.level < min_battery_level:
+        logging.warning(f"Low battery: {vehicle.battery.level}%. Ensure the battery is sufficiently charged.")
+        raise RuntimeError("Low battery level")
+
+# Function to calculate distance between two locations
+def get_distance(location1, location2):
+    """
+    Calculates the distance between two locations.
+    """
+    dlat = location2.lat - location1.lat
+    dlon = location2.lon - location1.lon
+    distance = ((dlat ** 2) + (dlon ** 2)) ** 0.5
+    return distance
+
+# Function to wait for the vehicle to reach the home location
+def wait_for_reach_home(timeout=300):
+    """
+    Waits for the vehicle to reach the home location within the specified timeout.
+    """
+    start_time = time.time()
+    while True:
+        current_time = time.time()
+        elapsed_time = current_time - start_time
+        current_location = vehicle.location.global_relative_frame
+        distance_to_home = get_distance(current_location, home_location)
+        if distance_to_home < 1:
+            logging.info("Home location reached")
+            break
+        if elapsed_time > timeout:
+            logging.error("Return to home timeout exceeded")
+            raise TimeoutError("Failed to reach home location within timeout period")
+        logging.info(f"Current distance to home: {distance_to_home:.2f} meters ({elapsed_time:.1f} seconds elapsed)")
+        time.sleep(1)
+
+# Function to simulate drone operations for testing
+def simulate_operations():
+    """
+    Simulates drone operations for testing purposes.
+    """
+    logging.info("Simulating drone operations")
+    for i in range(5):
+        logging.info(f"Simulated operation {i+1}")
+        time.sleep(2)
+
+# Execute the battery monitoring with simulation
+try:
+    telemetry_thread.start()
+    simulate_operations()
+    monitor_battery()
+except Exception as e:
+    logging.error(f"Critical error: {e}")
+
+# Disconnect from vehicle
+logging.info("Disconnecting from vehicle")
+vehicle.close()
+logging.info("Vehicle disconnected")
