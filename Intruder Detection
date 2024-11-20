@@ -1,0 +1,130 @@
+import cv2
+import numpy as np
+import logging
+import threading
+import time
+
+# Initialize logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Constants
+VIDEO_SOURCE = 0  # Video source (0 for default camera)
+INTRUDER_THRESHOLD = 500  # Threshold for intruder detection based on contour area
+DETECTION_INTERVAL = 1  # Interval for checking intruders in seconds
+NOTIFICATION_INTERVAL = 10  # Interval for sending notification about detected intruder
+
+# Global variables
+intruder_detected = False
+last_notification_time = 0
+
+# Function to initialize the video capture
+def initialize_video_capture(source=VIDEO_SOURCE):
+    """
+    Initializes the video capture from the specified source.
+    """
+    cap = cv2.VideoCapture(source)
+    if not cap.isOpened():
+        logging.error("Error opening video source")
+        raise RuntimeError("Error opening video source")
+    logging.info("Video capture initialized")
+    return cap
+
+# Function to process the video frame and detect intruders
+def detect_intruders(frame):
+    """
+    Processes the video frame to detect intruders using contour detection.
+    """
+    global intruder_detected
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blurred, 50, 150)
+    contours, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area > INTRUDER_THRESHOLD:
+            x, y, w, h = cv2.boundingRect(contour)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            intruder_detected = True
+            logging.info("Intruder detected!")
+        else:
+            intruder_detected = False
+    return frame
+
+# Function to log intruder detection events
+def log_intruder_event():
+    """
+    Logs the intruder detection event at regular intervals.
+    """
+    global last_notification_time
+    if intruder_detected and (time.time() - last_notification_time > NOTIFICATION_INTERVAL):
+        logging.info("Intruder detected at %s", time.strftime("%Y-%m-%d %H:%M:%S"))
+        last_notification_time = time.time()
+
+# Function to capture and process video frames
+def capture_and_process_video():
+    """
+    Captures video frames from the video source and processes them to detect intruders.
+    """
+    cap = initialize_video_capture()
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            logging.error("Error reading frame from video source")
+            break
+        frame_with_intruders = detect_intruders(frame)
+        cv2.imshow('Intruder Detection', frame_with_intruders)
+        log_intruder_event()
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+
+# Function to send notification about detected intruders
+def send_intruder_notification():
+    """
+    Sends a notification about detected intruders.
+    """
+    # Placeholder for notification logic (e.g., sending an email, SMS, or alert to a monitoring system)
+    logging.info("Sending notification about detected intruder")
+
+# Thread function to handle notifications
+def notification_thread():
+    """
+    Thread function to handle notifications about detected intruders.
+    """
+    while True:
+        if intruder_detected:
+            send_intruder_notification()
+        time.sleep(NOTIFICATION_INTERVAL)
+
+# Function to simulate video processing for testing
+def simulate_video_processing():
+    """
+    Simulates video processing for testing purposes.
+    """
+    logging.info("Simulating video processing")
+    for i in range(5):
+        logging.info(f"Simulated processing frame {i+1}")
+        time.sleep(2)
+
+# Main function to start intruder detection
+def start_intruder_detection():
+    """
+    Starts the intruder detection process with video capture and processing.
+    """
+    try:
+        capture_thread = threading.Thread(target=capture_and_process_video)
+        notification_thread_ = threading.Thread(target=notification_thread)
+        capture_thread.start()
+        notification_thread_.start()
+
+        simulate_video_processing()
+        capture_thread.join()
+        notification_thread_.join()
+    except Exception as e:
+        logging.error(f"Critical error: {e}")
+
+# Execute the intruder detection
+if _name_ == "_main_":
+    start_intruder_detection()
