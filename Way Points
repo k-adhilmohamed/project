@@ -1,0 +1,71 @@
+from dronekit import connect, VehicleMode, LocationGlobalRelative, Command
+import time
+import logging
+import threading
+
+# Initialize logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Constants
+WAYPOINT_ALTITUDE = 10  # Waypoint altitude in meters
+MISSION_FILE = 'waypoints.txt'  # File to store waypoints
+
+# Connect to the vehicle
+logging.info("Connecting to vehicle...")
+vehicle = connect('127.0.0.1:14550', wait_ready=True)
+logging.info("Successfully connected to vehicle")
+
+# Function to log detailed telemetry data
+def log_telemetry_data():
+    """
+    Logs detailed telemetry data at regular intervals.
+    """
+    while True:
+        altitude = vehicle.location.global_relative_frame.alt
+        groundspeed = vehicle.groundspeed
+        battery = vehicle.battery.level
+        logging.info(f"Telemetry data - Altitude: {altitude:.2f} m, Groundspeed: {groundspeed:.2f} m/s, Battery: {battery}%")
+        time.sleep(5)
+
+telemetry_thread = threading.Thread(target=log_telemetry_data)
+telemetry_thread.start()
+
+# Function to log vehicle status
+def log_vehicle_status():
+    """
+    Logs the current status of the vehicle.
+    """
+    logging.debug(f"Vehicle mode: {vehicle.mode.name}")
+    logging.debug(f"GPS fix: {vehicle.gps_0.fix_type}")
+    logging.debug(f"Battery: {vehicle.battery.level}%")
+    logging.debug(f"Is armable: {vehicle.is_armable}")
+    logging.debug(f"Last heartbeat: {vehicle.last_heartbeat}")
+    logging.debug(f"Location: {vehicle.location.global_relative_frame}")
+    logging.debug(f"Groundspeed: {vehicle.groundspeed}")
+
+# Function to create and save waypoints
+def create_and_save_waypoints():
+    """
+    Creates and saves waypoints to a file.
+    """
+    waypoints = [
+        LocationGlobalRelative(35.363261, 149.165230, WAYPOINT_ALTITUDE),
+        LocationGlobalRelative(35.363261, 149.165240, WAYPOINT_ALTITUDE),
+        LocationGlobalRelative(35.363271, 149.165230, WAYPOINT_ALTITUDE),
+        LocationGlobalRelative(35.363261, 149.165220, WAYPOINT_ALTITUDE)
+    ]
+    with open(MISSION_FILE, 'w') as file:
+        for waypoint in waypoints:
+            file.write(f"{waypoint.lat},{waypoint.lon},{waypoint.alt}\n")
+    logging.info("Waypoints saved to file")
+
+# Function to load waypoints from a file
+def load_waypoints():
+    """
+    Loads waypoints from a file.
+    """
+    waypoints = []
+    with open(MISSION_FILE, 'r') as file:
+        for line in file:
+            lat, lon, alt = map(float, line.strip().split(','))
+            waypoints.append(LocationGlobalRelative(lat, lon, alt
